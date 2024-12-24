@@ -1,0 +1,9 @@
+{
+    "id": "obsidian-fatebook",
+    "name": "Fatebook",
+    "version": "1.0.0",
+    "minAppVersion": "0.15.0",
+    "description": "Integrate Fatebook predictions into your Obsidian notes",
+    "author": "Your Name",
+    "isDesktopOnly": false
+}
