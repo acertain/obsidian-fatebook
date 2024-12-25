@@ -1,4 +1,5 @@
 const { Plugin, MarkdownView, Notice } = require('obsidian');
+const { remote } = require('electron');
 const { ViewPlugin, Decoration, WidgetType } = require('@codemirror/view');
 
 function debounce(func, wait) {
@@ -23,11 +24,8 @@ class FatebookPlugin extends Plugin {
 
         this.debouncedEnhanceMarkdownLinks = debounce(this.enhanceMarkdownLinks.bind(this), 60000);
 
-        this.isLoginModalOpen = false;
-        this.isLoggedIn = false;
         this.loginCallbacks = [];
-
-        await this.checkLoginStatus();
+        this.isLoggedIn = false;
 
         this.addCommand({
             id: 'open-fatebook-modal',
@@ -38,32 +36,34 @@ class FatebookPlugin extends Plugin {
 
         this.addRibbonIcon('scale', 'Fatebook', () => this.openPredictionModal());
 
+        this.addWebviewStyles();
+
+        this.registerEvent(this.app.workspace.on('file-open', this.onFileOpen.bind(this)));
+        this.registerEvent(this.app.workspace.on('editor-change', this.onEditorChange.bind(this)));
+
+        this.setupLogin();
+    }
+
+    async setupLogin() {
+        await this.checkLoginStatus();
+        if (!this.isLoggedIn) this.openLoginModal();
+
         this.predictWebview = this.setupWebview('predict-modal');
         this.questionWebview = this.setupWebview('question-loader');
-        this.loginWebview = null;
 
-        this.addWebviewStyles();
         window.addEventListener('message', this.handleIframeMessage.bind(this));
 
         const view = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (view) {
             await this.enhanceMarkdownLinks(view);
         }
-
-        // Register event handlers for file open and content change
-        this.registerEvent(
-            this.app.workspace.on('file-open', this.onFileOpen.bind(this))
-        );
-        this.registerEvent(
-            this.app.workspace.on('editor-change', this.onEditorChange.bind(this))
-        );
     }
 
     setupWebview(type) {
         const webview = document.createElement('iframe');
         Object.assign(webview, {
             className: 'fatebook-webview',
-            src: `${this.settings.fatebookUrl}${type === 'login' ? '' : 'embed/'}${type}`,
+            src: `${this.settings.fatebookUrl}embed/${type}`,
             allowpopups: ''
         });
         document.body.appendChild(webview);
@@ -82,13 +82,14 @@ class FatebookPlugin extends Plugin {
                 top: 50%;
                 transform: translate(-50%, -50%);
                 width: 860px;
-                height: 350px;
+                height: 800px;
             }
         `;
         document.head.appendChild(style);
     }
 
     handleIframeMessage({ data }) {
+        console.log('Fatebook iframe message', data);
         if (!data?.isFatebook) return;
         const { action, embedId, ...rest } = data;
         
@@ -104,6 +105,7 @@ class FatebookPlugin extends Plugin {
                 const iframe = this.getWebviewByEmbedId(embedId);
                 if (iframe) {
                     if (action === 'resize_iframe') {
+                        console.log('Resizing iframe', iframe, 'to', rest.box);
                         iframe.style.width = `${rest.box.width}px`;
                         iframe.style.height = `${rest.box.height}px`;
                     } else if (action === 'load-url') {
@@ -120,7 +122,6 @@ class FatebookPlugin extends Plugin {
         const webviews = {
             'predict-modal': this.predictWebview,
             'question-loader': this.questionWebview,
-            'login': this.loginWebview
         };
         return webviews[embedId] || null;
     }
@@ -197,10 +198,10 @@ class FatebookPlugin extends Plugin {
         return parts ? parts[2] : lastSegment || "";
     }
 
+    // unused
     async loadQuestion(questionId) {
         this.questionWebview.style.display = 'block';
         this.sendMessageToWebview(this.questionWebview, 'load_question', { questionId });
-        
         // Add click event listener to close the webview when clicking outside
         const closeQuestionWebview = (event) => {
             if (!this.questionWebview.contains(event.target)) {
@@ -208,7 +209,6 @@ class FatebookPlugin extends Plugin {
                 document.removeEventListener('click', closeQuestionWebview);
             }
         };
-        
         // Use setTimeout to add the event listener on the next tick
         // This prevents the webview from closing immediately when opened
         setTimeout(() => {
@@ -237,59 +237,57 @@ class FatebookPlugin extends Plugin {
 
     async checkLoginStatus() {
         try {
-            const response = await fetch(`${this.settings.fatebookUrl}api/v0/getQuestion?questionId=clxdrs8hu0001l50c5cyh3a84`, {
-                credentials: 'include'
-            });
-            this.isLoggedIn = response.status !== 401;
+            const response = await remote.net.fetch(`${this.settings.fatebookUrl}api/auth/session`, {'credentials': 'include'});
+            const data = await response.json();
+            this.isLoggedIn = data.user !== undefined;
         } catch (error) {
+            console.error('Error checking login status via Electron net module', error);
             this.isLoggedIn = false;
         }
     }
 
     async ensureLoggedIn() {
-        await this.checkLoginStatus();
         if (!this.isLoggedIn) {
             return new Promise((resolve) => {
                 this.loginCallbacks.push(resolve);
-                if (!this.isLoginModalOpen) {
-                    this.openLoginModal();
-                }
             });
         }
     }
 
     async openLoginModal() {
-        if (this.isLoginModalOpen || this.isLoggedIn) {
-            return;
-        }
+        const loginIframe = document.createElement('webview');
+        loginIframe.src = 'https://fatebook.io/api/auth/signin';
+        loginIframe.className = 'fatebook-webview';
+        loginIframe.style.display = 'block';
+        loginIframe.shadowRoot.querySelector('iframe').style.height = '100%';
+        document.body.appendChild(loginIframe);
 
-        this.isLoginModalOpen = true;
+        // this.loginWebview.style.display = 'block';
+        // this.loginWebview.style.width = '400px';
+        // this.loginWebview.style.height = '1000px';
 
-        if (!this.loginWebview) {
-            this.loginWebview = this.setupWebview('login');
-        }
-        this.loginWebview.style.display = 'block';
-        this.loginWebview.style.width = '400px';
-        this.loginWebview.style.height = '1000px';
+        return new Promise((resolve) => {
+            const checkLoginInterval = setInterval(async () => {
+                await this.checkLoginStatus();
+                if (this.isLoggedIn) {
+                    clearInterval(checkLoginInterval);
+                    this.loginCallbacks.forEach((callback) => callback());
+                    this.loginCallbacks = [];
+                    loginIframe.remove();
+                    new Notice('Login successful');
+                    
+                    this.predictWebview.src = this.predictWebview.src;
+                    this.questionWebview.src = this.questionWebview.src;
 
-        const checkLoginInterval = setInterval(async () => {
-            await this.checkLoginStatus();
-            if (this.isLoggedIn) {
-                clearInterval(checkLoginInterval);
-                this.loginWebview.style.display = 'none';
-                this.isLoginModalOpen = false;
-                new Notice('Login successful');
-                this.loginCallbacks.forEach(callback => callback());
-                this.loginCallbacks = [];
-                const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-                if (activeView) {
-                    activeView.leaf.rebuildView();
+                    resolve();
                 }
-            }
-        }, 1000);
+            }, 1000);
+        });
     }
 
     async enhanceMarkdownLinks(view) {
+        await this.ensureLoggedIn();
+
         if (!view || !view.editor) return;
         const editor = view.editor;
         const file = view.file;
