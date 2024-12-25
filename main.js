@@ -46,7 +46,7 @@ class FatebookPlugin extends Plugin {
 
     async setupLogin() {
         await this.checkLoginStatus();
-        if (!this.isLoggedIn) this.openLoginModal();
+        if (!this.isLoggedIn) await this.openLoginModal();
 
         this.predictWebview = this.setupWebview('predict-modal');
         this.questionWebview = this.setupWebview('question-loader');
@@ -276,9 +276,6 @@ class FatebookPlugin extends Plugin {
                     loginIframe.remove();
                     new Notice('Login successful');
                     
-                    this.predictWebview.src = this.predictWebview.src;
-                    this.questionWebview.src = this.questionWebview.src;
-
                     resolve();
                 }
             }, 1000);
