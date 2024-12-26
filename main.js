@@ -44,6 +44,12 @@ class FatebookPlugin extends Plugin {
         this.setupLogin();
     }
 
+    async onunload() {
+        this.predictWebview.remove();
+        this.questionWebview.remove();
+        this.style.remove();
+    }
+
     async setupLogin() {
         await this.checkLoginStatus();
         if (!this.isLoggedIn) await this.openLoginModal();
@@ -71,8 +77,8 @@ class FatebookPlugin extends Plugin {
     }
 
     addWebviewStyles() {
-        const style = document.createElement('style');
-        style.textContent = `
+        this.style = document.createElement('style');
+        this.style.textContent = `
             .fatebook-webview {
                 display: none;
                 position: fixed;
@@ -81,11 +87,11 @@ class FatebookPlugin extends Plugin {
                 left: 50%;
                 top: 50%;
                 transform: translate(-50%, -50%);
-                width: 860px;
-                height: 800px;
+                width: 75%;
+                height: 75%;
             }
         `;
-        document.head.appendChild(style);
+        document.head.appendChild(this.style);
     }
 
     handleIframeMessage({ data }) {
@@ -103,16 +109,13 @@ class FatebookPlugin extends Plugin {
                 break;
             case 'load-url':
                 const iframe = this.getWebviewByEmbedId(embedId);
-                if (iframe) {
-                    if (action === 'resize_iframe') {
-                        console.log('Resizing iframe', iframe, 'to', rest.box);
-                        iframe.style.width = `${rest.box.width}px`;
-                        iframe.style.height = `${rest.box.height}px`;
-                    } else if (action === 'load-url') {
-                        iframe.src = rest.src;
-                    }
-                }
+                if (iframe) { iframe.src = rest.src; }
                 break;
+            // resize_iframe only gets sent for hover embed
+                    // if (action === 'resize_iframe') {
+                    //     console.log('Resizing iframe', iframe, 'to', rest.box);
+                    //     iframe.style.width = `${rest.box.width}px`;
+                    //     iframe.style.height = `${rest.box.height}px`;
             default:
                 console.log(`Unhandled Fatebook action: ${action}`);
         }
@@ -131,6 +134,7 @@ class FatebookPlugin extends Plugin {
         this.predictWebview.style.display = 'block';
         this.sendMessageToWebview(this.predictWebview, 'focus_modal', { defaultText: selectedText });
         this.predictWebview.contentWindow.focus();
+        this.setupCloseIframe(this.predictWebview);
     }
 
 
@@ -202,10 +206,14 @@ class FatebookPlugin extends Plugin {
     async loadQuestion(questionId) {
         this.questionWebview.style.display = 'block';
         this.sendMessageToWebview(this.questionWebview, 'load_question', { questionId });
+        this.setupCloseIframe(this.questionWebview);
+    }
+
+    setupCloseIframe(iframe) {
         // Add click event listener to close the webview when clicking outside
         const closeQuestionWebview = (event) => {
-            if (!this.questionWebview.contains(event.target)) {
-                this.questionWebview.style.display = 'none';
+            if (!iframe.contains(event.target)) {
+                iframe.style.display = 'none';
                 document.removeEventListener('click', closeQuestionWebview);
             }
         };
